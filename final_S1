@@ -1,0 +1,251 @@
+/**** Start of imports. If edited, may not auto-convert in the playground. ****/
+var geometry = 
+    /* color: #d63000 */
+    /* displayProperties: [
+      {
+        "type": "rectangle"
+      }
+    ] */
+    ee.Geometry.Polygon(
+        [[[80.89125276473385, 8.203120610884413],
+          [80.89125276473385, 8.104563531968541],
+          [80.93966127303463, 8.104563531968541],
+          [80.93966127303463, 8.203120610884413]]], null, false),
+    geometry2 = 
+    /* color: #d6d407 */
+    /* displayProperties: [
+      {
+        "type": "rectangle"
+      }
+    ] */
+    ee.Geometry.Polygon(
+        [[[80.92454610388495, 8.151583407499512],
+          [80.92454610388495, 8.144786270580864],
+          [80.93115506689765, 8.144786270580864],
+          [80.93115506689765, 8.151583407499512]]], null, false);
+/***** End of imports. If edited, may not auto-convert in the playground. *****/
+/* COPERNICUS/S1_GRD hasith@fos.cmb.ac.lk new
+*/
+var img_s1 = ee.ImageCollection('COPERNICUS/S1_GRD')
+        .filter(ee.Filter.listContains('transmitterReceiverPolarisation', 'VV'))
+        .filter(ee.Filter.eq('instrumentMode', 'IW'))
+        //.filter(ee.Filter.eq('orbitProperties_pass', 'DESCENDING')
+        .filterDate('1800-02-01', '2019-10-04')
+        .filterBounds(geometry)
+
+      
+        .map(function(image) {
+          //var edge = image.lt(-30.0);
+          //var maskedImage = image.mask().and(edge.not());
+          //var res = image.normalizedDifference(['VV','VH']).rename('test')
+          return image
+               // .addBands(res)
+               // .updateMask(maskedImage)
+                .clip(geometry);
+          
+        });
+
+/*
+// sentinal 2 collection 
+var img_s2 = ee.ImageCollection('COPERNICUS/S2')
+        .filterDate('2018-01-01', '2019-01-04')
+        .filterBounds(geometry)
+        .map(function(image) {
+          var res = image.normalizedDifference(['B3','B8']).rename('NDWI')
+          return image
+                //.updateMask(maskedImage)
+                .addBands(res)
+                .clip(geometry);
+          
+        });
+*/
+
+// Add the first image to the map, just as a preview.
+Map.centerObject(geometry,12);
+//Map.addLayer(img_s1.select(['VV','VH','test']).first(),{bands:['VV','VV','test']},'test s2' )
+
+var test_img_s1 = ee.Image('COPERNICUS/S1_GRD/S1A_IW_GRDH_1SDV_20170112T002445_20170112T002510_014791_018174_E5C6')
+//var test_img_s1 = ee.Image('COPERNICUS/S1_GRD/S1A_IW_GRDH_1SDV_20171027T002454_20171027T002519_018991_020197_760C')
+.clip(geometry)
+Map.addLayer(test_img_s1.select('VV'),{min:-30,max:0},'unprocessed')
+
+var asc_img_s1 = ee.Image('COPERNICUS/S1_GRD/S1A_IW_GRDH_1SDV_20171027T124930_20171027T124955_018999_0201D3_3473')
+.clip(geometry)
+
+
+
+var training = test_img_s1.select('VV').sample({
+  region: geometry,
+  scale: 10,
+  numPixels: 10000
+});
+var training_asc =asc_img_s1.select('VV').sample({
+  region: geometry,
+  scale: 10,
+  numPixels: 10000
+});
+
+
+var clusterer_2 = ee.Clusterer.wekaKMeans(4).train(training_asc);
+var result_asc = asc_img_s1.select('VV').cluster(clusterer_2);
+
+
+var clusterer = ee.Clusterer.wekaKMeans(4).train(training);
+var result = test_img_s1.select('VV').cluster(clusterer);
+
+
+
+Map.addLayer(result.randomVisualizer(), {}, 'clusters-desc');
+Map.addLayer(result.select('cluster').eq(0), {}, 'clusters_decs-BW');
+
+Map.addLayer(result_asc.randomVisualizer(), {}, 'clusters-asc');
+Map.addLayer(result_asc.select('cluster').eq(3), {}, 'clusters_asc-BW');
+
+var desc = img_s1.filter(ee.Filter.eq('orbitProperties_pass', 'DESCENDING'));
+var asc = img_s1.filter(ee.Filter.eq('orbitProperties_pass', 'ASCENDING'));
+
+var filt = desc
+          .map(function(image) {
+          var result = image.cluster(clusterer);
+          var thrsh = result.select('cluster').eq(0)
+          .rename('ahe');
+         
+          return image
+                .addBands(thrsh)
+        });
+var filt_asc = asc
+          .map(function(image) {
+          var result = image.cluster(clusterer_2);
+          var thrsh = result.select('cluster').eq(3)
+          .rename('ahe_asc');
+         
+          return image
+                .addBands(thrsh)
+        });
+
+
+
+
+Map.addLayer(filt.select('ahe').mean(),{palette:['white','Red','black'],min:0,max:1},'map_desc')
+Map.addLayer(filt_asc.select('ahe_asc').mean(),{palette:['white','blue','black'],min:0,max:1},'map_asc')
+//print(asc)
+
+/*
+var thumb2 = ui.Thumbnail({
+  // Specifying a collection for "image" animates the sequence of images.
+  image: filt.select('ahe'),
+  params: {
+  //crs: 'EPSG:3857',  // Maps Mercator
+  dimensions: '320',
+  region: geometry,
+  palette: 'blue,yellow',
+  min :0 ,
+  max : 1,
+  framesPerSecond: 30,
+  },
+  style: {
+    position: 'bottom-right',
+    width: '320px'
+  }
+  });
+Map.add(thumb2);
+
+*/
+
+var vol = ui.Chart.image.series(filt.select('ahe'), geometry, ee.Reducer.sum())
+          .setOptions({ title: 'Water serface area-desc vs t',
+              lineWidth: 1})
+          .setChartType('ScatterChart')
+print(vol)
+
+var vol_asc = ui.Chart.image.series(filt_asc.select('ahe_asc'), geometry, ee.Reducer.sum())
+          .setOptions({ title: 'Water serface area-asc vs t',
+              lineWidth: 1})
+          .setChartType('ScatterChart')
+print(vol_asc)
+// Visualization parameters.
+
+/*
+var args = {
+  //crs: 'EPSG:3857',  // Maps Mercator
+  dimensions: '320',
+  region: geometry,
+  min: -1,
+  max: 1,
+  palette: 'black, red, yellow',
+  framesPerSecond: 12,
+};
+
+
+var thumb = ui.Thumbnail({
+  // Specifying a collection for "image" animates the sequence of images.
+  image: img_s2.select('NDWI'),
+  params: args,
+  style: {
+    position: 'bottom-right',
+    width: '320px'
+  }});
+
+Map.add(thumb);
+*/
+
+//final thumbnale viewing
+/*
+var thumb1 = ui.Thumbnail({
+  // Specifying a collection for "image" animates the sequence of images.
+  image: img_s1.select('VV'),
+  params: {
+  //crs: 'EPSG:3857',  // Maps Mercator
+  dimensions: '320',
+  region: geometry,
+  palette: 'black,blue,green, red, yellow',
+  min :-30 ,
+  max : 0,
+  framesPerSecond: 12,
+  },
+  style: {
+    position: 'bottom-left',
+    width: '320px'
+  }
+  });
+
+
+//Map.add(thumb);
+
+var thumb2 = ui.Thumbnail({
+  // Specifying a collection for "image" animates the sequence of images.
+  image: img_s1.select('test'),
+  params: {
+  //crs: 'EPSG:3857',  // Maps Mercator
+  dimensions: '320',
+  region: geometry,
+  palette: 'black,blue,green, red, yellow',
+  min :-30 ,
+  max : 0,
+  framesPerSecond: 12,
+  },
+  style: {
+    position: 'bottom-center',
+    width: '320px'
+  }
+  });
+//Map.add(thumb);
+*/
+/* //Kmeans - didnt work
+var km_lbl = ee.Algorithms.Image.Segmentation.GMeans({
+  image: test_img_s1,
+   //numClusters: 100,
+   numIterations: 1000, 
+   neighborhoodSize: 1 ,
+    //gridSize:5,// forceConvergence, uniqueLabels
+});
+
+Map.addLayer(km_lbl,{},'Kmns')
+print(km_lbl)
+*/
+
+Export.table.toDrive({
+  collection: featureCollection,
+  description: 'exportTableExample',
+  fileFormat: 'CSV'
+});
